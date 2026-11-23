@@ -47,7 +47,9 @@ The accompanying report, *TurtleBot3 Autonomous Localization and Dynamic Waypoin
 - A five-waypoint autonomous mission ending with the terminal result: `Succeeded! All waypoints traversed.`
 - Runtime dynamic waypoint interfaces through `/clicked_point` and `/dynamic_waypoints`.
 
-See the figures and experiment summary on pages 2, 5, and 6 of the technical report.
+<img width="1366" height="768" alt="Screenshot from 2026-11-23 16-27-30" src="https://github.com/user-attachments/assets/c372c888-5671-450d-aa1c-84893546376a" />
+<img width="1366" height="768" alt="Screenshot from 2026-11-23 16-27-40" src="https://github.com/user-attachments/assets/d1605fde-5dc3-478b-bfe1-7e4483684cef" />
+
 
 ## Requirements
 
