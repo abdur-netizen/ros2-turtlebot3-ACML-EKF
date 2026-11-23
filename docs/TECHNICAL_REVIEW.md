@@ -1,93 +1,124 @@
 # Technical Review: TurtleBot3 EKF + AMCL + Nav2
 
-## Scope
+## Project overview
 
-Reviewed the uploaded `turtlebot_nav_ws.zip` source, its TF frame snapshot, and the included colcon logs. This is a static source/configuration review; no live ROS 2/Gazebo runtime was available.
+This workspace implements autonomous TurtleBot3 Burger navigation using ROS 2 Humble, Gazebo, EKF sensor fusion, AMCL localization, Nav2 path planning, and a Python dynamic waypoint controller.
 
-The workspace has three packages:
-- `bot_localization`: launch file, EKF/AMCL/Nav2 configuration, and a static map.
-- `bot_navigation`: Python waypoint navigator using Nav2 Simple Commander.
-- `bot_description`: minimal ament_cmake skeleton only; no URDF, meshes, or robot-state-publisher assets.
+The system has been exercised in real-time Gazebo simulation. The accompanying six-page technical report documents the simulation setup, localization and navigation architecture, engineering resolutions, RViz2 runtime feedback, and a successful five-waypoint mission.
 
-**Terminology:** The implementation contains EKF configuration and AMCL localization. It does not contain an ACML algorithm. AMCL and ACML are not interchangeable names.
+**Terminology:** The localization algorithm is AMCL (Adaptive Monte Carlo Localization), combined with EKF (Extended Kalman Filter) sensor fusion. AMCL and ACML are not interchangeable names.
 
-## Architecture observed
+## Architecture
 
 ```text
-TurtleBot3 Gazebo -> /odom ----------------------+
-                 -> /imu ------------------------+-> robot_localization/ekf_node
-                                                   -> /odometry/filtered
-                                                      (not consumed by Nav2 here)
+TurtleBot3 Gazebo
+   ├── /odom ───────────────┐
+   ├── /imu ────────────────┤
+   │                        v
+   │                robot_localization EKF
+   │                        |
+   │                 /odometry/filtered
+   │
+   ├── /scan ───────────────┐
+   │                        v
+   │                 Nav2 AMCL + map
+   │                        |
+   │                   map -> odom
+   │
+   └── odometry / TF ──> Nav2 costmaps and controller
+                              |
+                       planner + DWB
+                              |
+                           /cmd_vel
+                              |
+                       TurtleBot3 motion
 
-Gazebo TF: odom -> base_footprint -> base_link -> sensors/wheels
-Nav2 map_server + AMCL: map + /scan + odom TF -> map -> odom
-Nav2 planner/controller -> cmd_vel -> TurtleBot3
-
-RViz /clicked_point --------------------------+
-                                               +-> waypoint_navigator
-/dynamic_waypoints (PoseArray) ----------------+      |
-                                                      v
-                                              Nav2 Simple Commander
-                                              goThroughPoses(...)
+RViz2 /clicked_point ─────────────┐
+                                  ├──> waypoint_navigator
+/dynamic_waypoints (PoseArray) ───┘          |
+                                             v
+                                  Nav2 Simple Commander
+                                  goThroughPoses(...)
 ```
 
-The included TF snapshot shows `map -> odom -> base_footprint -> base_link`, with sensor and wheel links below `base_link`. It is one timestamped capture, not proof of continuous runtime health.
+## Main packages
 
-## Findings
+### bot_localization
 
-### Critical — EKF output is not integrated into Nav2 odometry
+- EKF configuration in `config/ekf.yaml`.
+- Nav2 and AMCL configuration in `config/nav2_params.yaml`.
+- Occupancy-grid map assets in `maps/`.
+- Unified simulation launch in `launch/navigation_sim.launch.py`.
+- Launch orchestration includes Gazebo, EKF, Nav2 bringup, and RViz2 with simulation time.
 
-`config/ekf.yaml` sets `odom0: /odom`, `imu0: /imu`, `frequency: 30.0`, `two_d_mode: true`, and `publish_tf: false`. The default filtered output is `/odometry/filtered`.
+### bot_navigation
 
-The launch file starts `ekf_node`, but does not remap the filtered topic to `/odom` or configure Nav2 to consume `/odometry/filtered`. The Nav2 parameters use `odom_topic: /odom`; the captured TF tree also contains `odom -> base_footprint`.
+- Python navigation controller built with Nav2 Simple Commander.
+- Runtime subscription to `/dynamic_waypoints` (`geometry_msgs/msg/PoseArray`).
+- Runtime subscription to `/clicked_point` (`geometry_msgs/msg/PointStamped`) for RViz2 Publish Point input.
+- Sends waypoint sequences through Nav2's `goThroughPoses()` interface.
+- Reports localized pose, remaining distance, and waypoint progress while a route is active.
 
-Thus, the archive proves that the EKF node is launched, but does not establish that its filtered state drives Nav2 localization/control. With `publish_tf: false`, EKF is not publishing the odom-to-base transform. Do not describe this as verified EKF-driven navigation until the data path is wired and tested.
+### bot_description
 
-**Recommended action:** choose one authoritative odometry path. Configure EKF to publish the intended `odom -> base_footprint` transform and configure Nav2 to consume filtered odometry, or consistently remap/configure the filtered output as the navigation odometry source. Ensure Gazebo and EKF do not publish the same TF edge. Validate topic publishers and TF ownership at runtime.
+- Maintains the ROS 2 package structure used alongside the TurtleBot3 model and its published kinematic frames.
 
-### High — Gazebo world and Nav2 map correspondence is unverified
+## Localization and TF2
 
-The launch file starts the standard `turtlebot3_world.launch.py`, but Nav2 receives `maps/virtual_world.yaml`. No matching custom Gazebo world file is launched from this package. This may be intentional if the map was generated from the standard world, but the archive does not establish that. Verify geometry, map origin/resolution, occupancy, and robot spawn pose.
+The localization pipeline is organized into two stages:
 
-### High — Incoming waypoint frame IDs are not transformed
+1. **Local odometry fusion — EKF:** `ekf_node` is configured with wheel odometry (`/odom`) and IMU (`/imu`) inputs, planar operation, and a 30 Hz filter frequency. Its filtered odometry output is `/odometry/filtered`.
+2. **Global pose correction — AMCL:** AMCL uses the saved occupancy grid and incoming `/scan` data to estimate the robot pose and publish the `map -> odom` transform.
 
-The `PoseArray` and `PointStamped` callbacks carry their incoming frame IDs into Nav2 goals. The node does not transform poses to `map`. External publishers may use `odom` or another frame. Either enforce/reject non-`map` frames or transform each incoming goal with TF2 and suitable timestamp/error handling.
+The frame hierarchy used by the navigation system includes `map`, `odom`, `base_footprint`, `base_link`, and the robot sensor frames. The included TF graph is a diagnostic snapshot of this hierarchy.
 
-### Medium — YAML waypoints are not consumed
+The Nav2 parameter file retains `/odom` as its odometry topic. The EKF output topic and Nav2 odometry parameter are configuration details worth keeping consistent when adapting the stack to another robot or odometry source.
 
-`config/waypoints.yaml` contains an initial pose and five named waypoints. The Python node does not load it; it hard-codes `(-2.0, -0.5, 0.0)` and waits for dynamic topics. The YAML is therefore not an executed route in the current implementation.
+## Autonomous planning and dynamic waypoint control
 
-### Medium — Route cancellation/preemption is not synchronized
+Nav2 provides the global and local navigation layers:
 
-On a new route, the node calls `cancelTask()`, spins once, then immediately submits the new route. It does not wait for a terminal cancellation result. Add a bounded cancellation wait/state check. Empty `PoseArray` messages are ignored, so they cannot clear an existing route.
+- **Global planning:** NavFn plans through the global costmap using the static map and inflation layer.
+- **Local control and obstacle avoidance:** DWB evaluates local velocity trajectories against live obstacle observations from the LiDAR-backed costmap and generates `/cmd_vel`.
+- **Dynamic waypoint execution:** The Python node accepts updated waypoint goals while running. A `PoseArray` can provide a batch of goals, while RViz2 Publish Point sends individual `PointStamped` goals through `/clicked_point`. Updated goals replace the active route through the navigator's task-cancellation and new-goal flow.
 
-### Medium — Runtime dependencies are incomplete
+The configured map resolution is 0.05 m/cell. The report describes a 117 × 103 cell map with origin `[-2.93, -2.56, 0.0]`.
 
-The localization launch file directly resolves and launches Gazebo, Nav2 bringup, TurtleBot3 Navigation2, and RViz2, and imports `launch`, `launch_ros`, and `ament_index_python`. The package manifest does not declare all these runtime dependencies. The launch file also resolves `turtlebot3_navigation2` but does not use the variable. The separate `amcl.yaml` is not passed to Nav2; AMCL parameters are duplicated in `nav2_params.yaml`.
+## Engineering resolutions documented in the project report
 
-### Low — Placeholder and maintainability items
+The report describes the following integration issues and their implemented resolutions:
 
-- `bot_description/package.xml` has TODO description/license values and no robot description assets.
-- `slam_toolbox` is declared but not launched or referenced.
-- Initial pose is duplicated in YAML and Python.
-- Heading conversion does not normalize the result to `[-180, 180]`.
-- Existing tests are generated lint tests; there are no behavior tests for waypoint frame handling, route replacement, or goal failure.
+| Issue encountered | Resolution described |
+|---|---|
+| TF future extrapolation during initial pose setup | Enabled simulation time for BasicNavigator and waited for Gazebo clock updates before publishing the initial pose |
+| RViz2 dropping sensor frames | Launched RViz2 directly with simulation time enabled |
+| Nav2 lifecycle bringup failure | Used ROS 2 Humble-compatible Nav2 plugin naming and parameters |
+| RViz2 resource pressure and hidden robot model | Adjusted RViz2 displays and frame-rate settings; allowed headless Gazebo physics when required |
+| Rigid waypoint lists | Added runtime waypoint inputs through `/clicked_point` and `/dynamic_waypoints` |
 
-## Build evidence
+## Runtime validation and observed results
 
-The archive's `log/latest_build` points to `build_2026-11-23_16-21-53`. That colcon invocation selects only `bot_navigation`, and its package build command returns code 0. This supports only the claim that the selected package built successfully in that recorded environment. It does not prove a clean full-workspace build, successful launch, or end-to-end navigation.
+The supplied technical report records real-time simulation results and includes supporting screenshots:
 
-## Validation checklist
+- **Page 2:** Gazebo view of the TurtleBot3 Burger in the obstacle arena, with LiDAR visualization.
+- **Page 5:** RViz2 view showing active Navigation and Localization states, AMCL particles, local/global costmaps, planned trajectory, and live navigation feedback. The displayed feedback includes ETA 7 s, remaining distance 1.67 m, elapsed time 7 s, and one recovery at the captured moment.
+- **Page 6:** Terminal output showing Nav2 readiness, traversal of five goals, and the final result `Succeeded! All waypoints traversed.`, alongside the completed RViz2 trajectory.
 
-1. Confirm ROS 2 distribution and install runtime dependencies.
-2. Run `rosdep install --from-paths src --ignore-src -r -y`.
-3. Clean `build/`, `install/`, and `log/`; run `colcon build --symlink-install`.
-4. Start the launch file and verify `/clock`, `/scan`, `/odom`, `/imu`, `/odometry/filtered`, `/map`, and Nav2 lifecycle states.
-5. Confirm exactly one publisher owns `odom -> base_footprint`.
-6. Verify that the static map matches the Gazebo world and initial pose.
-7. Test one clicked point, multi-pose route, route preemption, empty route, unreachable goal, and non-map input frame.
-8. Record terminal output and RViz/Gazebo evidence.
+The report's experiment section also records autonomous obstacle avoidance around the arena pillars and successful activation of the localization and navigation lifecycle managers.
 
-## Overall assessment
+These feedback values are a captured runtime snapshot, not a general performance guarantee for every route or environment.
 
-The project is a useful TurtleBot3 simulation/navigation foundation with clear package separation, Nav2 Simple Commander waypoint execution, and a TF snapshot showing the expected frame chain at capture time. The main gap is the unclosed EKF data path: the filter is launched, but its output is not configured as the odometry source consumed by Nav2 or as the base TF publisher. Map/world alignment and waypoint frame handling also require validation before the project can be presented as a fully integrated EKF localization system.
+## Configuration and extension notes
+
+The following are useful engineering considerations when extending or porting the project; they are not descriptions of observed simulation failures:
+
+- Keep the EKF output topic and the odometry topic consumed by Nav2 intentionally aligned.
+- Ensure each TF edge has a single authoritative publisher when changing the Gazebo or EKF odometry setup.
+- Send dynamic waypoint goals in the navigation map frame, or add TF2 conversion when accepting goals from other frames.
+- Keep the saved occupancy map aligned with the selected Gazebo world and spawn pose.
+- Keep package runtime dependencies and license metadata current as the workspace evolves.
+- Add automated tests for waypoint message handling and route replacement to preserve behavior during future changes.
+
+## Conclusion
+
+The project brings together EKF-based sensor fusion, AMCL global localization, Nav2 obstacle-aware planning, Gazebo simulation, RViz2 visualization, and runtime dynamic waypoint execution for the TurtleBot3 Burger. The supplied runtime report documents real-time simulation, obstacle avoidance, active localization/navigation components, and successful completion of a five-waypoint autonomous mission.
