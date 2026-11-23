@@ -1,0 +1,26 @@
+initial_pose:
+  x: -2.00
+  y: -0.50
+  yaw_deg: 0.0
+
+waypoints:
+  - name: "South-West Entry"
+    x: -0.65
+    y: -0.50
+    yaw_deg: 0.0
+  - name: "South-East Corner"
+    x: 0.65
+    y: -0.50
+    yaw_deg: 90.0
+  - name: "North-East Corner"
+    x: 0.65
+    y: 0.65
+    yaw_deg: 180.0
+  - name: "North-West Corner"
+    x: -0.65
+    y: 0.65
+    yaw_deg: -90.0
+  - name: "Home Base"
+    x: -2.00
+    y: -0.50
+    yaw_deg: 0.0

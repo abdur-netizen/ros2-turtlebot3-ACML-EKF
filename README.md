@@ -9,20 +9,17 @@ A ROS 2 workspace for TurtleBot3 simulation and navigation using Gazebo, robot_l
 ```text
 turtlebot_nav_ws/
 ├── src/
-│   ├── bot_description/             # Currently a minimal ament_cmake package skeleton
+│   ├── bot_description/             # Minimal ament_cmake package skeleton
 │   ├── bot_localization/
-│   │   ├── config/
-│   │   │   ├── amcl.yaml
-│   │   │   ├── ekf.yaml
-│   │   │   └── nav2_params.yaml
+│   │   ├── config/                  # EKF, AMCL and Nav2 parameters
 │   │   ├── launch/navigation_sim.launch.py
-│   │   └── maps/                    # virtual_world.pgm + YAML metadata
+│   │   └── maps/                    # virtual_world.png + YAML metadata
 │   └── bot_navigation/
 │       ├── bot_navigation/waypoint_navigator.py
 │       └── config/waypoints.yaml
 └── docs/
     ├── TECHNICAL_REVIEW.md
-    └── diagnostics/                 # Captured TF tree snapshot
+    └── diagnostics/tf_tree_2026-11-23.gv
 ```
 
 ## Software architecture
